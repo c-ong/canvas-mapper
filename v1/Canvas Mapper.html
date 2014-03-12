@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="zh-CN" dir="ltr">
+<head>
+  <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+  <title>Title</title> 
+  
+  <style type="text/css">
+    
+  </style>
+  
+  <script type="text/javascript">
+	/** 
+	 * @created Dec.20, 2013 10:22 AM 
+	 * @updated Dec.24, 2013 11:22 AM 
+	 */
+	
+	var W3C_DOM = Element.prototype.addEventListener;
+	
+	var IE_DOM 	= Element.prototype.attachEvent;
+    
+	var $ = function( id ) {
+		return document.getElementById( id );
+	};
+		
+	function addEvent( elem, evnt, func) {
+		if ( elem.addEventListener )  // W3C DOM
+			elem.addEventListener( evnt, func, false );
+		else if ( elem.attachEvent )  // IE DOM
+			elem.attachEvent( "on" + evnt, func );
+		else  						  // No much to do
+			elem[ evnt ] = func;
+   	}
+	
+	var _supportedConsole = ! ( "undefined" === typeof( console ) );
+	
+	/** 
+	 * Debugger tools(Actually that is the Browser internal Console, if your 
+	 * Browser has supported.)
+	 */
+	var debug = debug || {		
+		enable: 1,
+		
+		info: ! _supportedConsole ? function() {} : function( o ) {
+			this.enable && console.info( o );
+		},
+		
+		log: ! _supportedConsole ? function() {} : function( o ) {
+			this.enable && console.log( o );
+		},
+		
+		error: ! _supportedConsole ? function() {} : function( o ) {
+			try { this.enable && console.error( o ); 
+			} catch( e ) { debug.log( o ); 
+			} finally {}
+		},
+		
+		dir: ! _supportedConsole ? function() {} : function( o ) {
+			this.enable && console.dir( o );
+		} 		
+	};
+	
+	function ImageMapper() {
+	
+		/** @enum{string} @const*/
+		var IDS = {
+			SOURCE: "source",
+			RESULT: "graph-result",
+			DOM_RESULT: "dom-result"
+		};
+		
+		/** 
+		 * Pixel info for ImageData.
+		 * @enum(number)
+		 * @const
+		 */
+		var PIXEL = {
+			OFFSET_RED: 0,
+			OFFSET_GREEN: 1,
+			OFFSET_BLUE: 2,
+			OFFSET_ALPAH: 3
+		};
+		
+		var COLOR_MASK_SHIFT	= 8;		
+				
+		var COLORS_MASK 		= ~0xFF;
+				
+		var COLOR_RED_SHIFT 	= 24;
+		var COLOR_GREEN_SHIFT 	= 16;
+		var COLOR_BLUE_SHIFT 	= 8;
+		
+		var COLOR_RED_MASK 		= 0xFF << COLOR_RED_SHIFT;
+		var COLOR_GREEN_MASK 	= 0xFF << COLOR_GREEN_SHIFT;
+		var COLOR_BLUE_MASK 	= 0xFF << COLOR_BLUE_SHIFT;
+		
+		var ALPHA_MASK 			= 0xFF;
+		
+		var COLOR_BLACK = 0x000000;
+		var COLOR_WHITE = 0xFFFFFF;
+	
+		/**
+		 * The normal text with container height ratio, this isn't best solution
+		 * (e.g.: font-size: 30px then the container height is 36px).
+		 * @type {nubmer}
+		 * @const
+		 */
+		var LINEHEIGHT_RATIO = 1.2;
+	
+		/** @type {string} */
+		var input = 'A';
+		
+		/** @enum(PixelSpec) */
+		var matrix;
+		
+		/** @type {number} */
+		var matrixWidth,
+			matrixHeight;
+			
+		var matrixOffsetX,
+			matrixOffsetY;
+		
+		/** @type {HTMLCanvasElement} */
+		var src;
+		
+		/** @type {CanvasRenderingContext2D} */
+		var srcCtx2d;
+		
+		var exCanvas;
+		var exCtx2D;		
+		
+		var exWordWidth, 
+			exWordHeight;
+			
+		var padding = 1;
+		
+		/** @constructor */
+		function PixelSpec( i, l, t, rgba ) {
+			this.id = i;
+			this.left = l;
+			this.top = t;
+			this.rgba = rgba;
+		}
+		PixelSpec.prototype.toString = function() {
+			var sb = [];
+			
+			sb.push( '{ ' );
+			sb.push( "id: ", 	this.id, 	"; " );
+			sb.push( "left: ", 	this.left, 	"; " );
+			sb.push( "top: ", 	this.top, 	"; " );
+			sb.push( "rgba: ", 	this.rgba );
+			sb.push( ' }' );
+			
+			return sb.join( '' );
+		}
+		
+		/** 
+		 * Used for Matrix model to rendering UIs.
+		 * @constructor
+		 */
+		function Tile( elem, rid ) {
+			/** @type {Element} */
+			this.elem = emem;
+			
+			/** @type {number|undefined} */
+			this.rid = rid;
+		}
+		
+		/** 
+		 * Describe a color the RGBA-hexadecimal format each value.
+		 * @constructor
+		 */
+		function Rgba( r, g, b, a ) {
+			/** @type {Element} */
+			this.red = r;
+			/** @type {Element} */
+			this.green = g;
+			/** @type {Element} */
+			this.blue = b;
+			/** @type {Element} */
+			this.alpha = a;
+		}
+		Rgba.prototype.toString = function() {
+			var sb = [];
+			
+			sb.push( '{ ' );
+			sb.push( "red: ", 	this.red, 	"; " );
+			sb.push( "green: ", this.green, "; " );
+			sb.push( "blue: ", 	this.blue, 	"; " );
+			sb.push( "alpha: ", this.alpha );
+			sb.push( ' }' );
+			
+			return sb.join( '' );
+		}
+		
+		
+		/**
+		 * Returns an ImageData object that copies the pixel data for the 
+		 * src specified rectangle on a canvas.
+		 *
+		 * interface ImageData {
+		 *	  readonly attribute unsigned long width;
+		 *	  readonly attribute unsigned long height;
+		 *	  readonly attribute double resolution;
+		 *	  readonly attribute Uint8ClampedArray data;
+		 *	};
+		 *
+		 * @return {ImageData}
+		 */
+		function extractImageDataFromSrc() {
+			var canvas = src;
+			return srcCtx2d.getImageData( 0, 0, canvas.width, canvas.height );
+		}
+		
+		function layout() {
+		}
+		
+		function redraw() {
+		}
+		
+		function createTile() {
+		}
+		
+		function prepareSource() {		
+			var canvas = $( IDS.SOURCE );
+
+			debug.dir( canvas );
+
+			var ctx2D = canvas.getContext( "2d" );
+			
+			var fontSize = 30;
+			ctx2D.font = fontSize + "px Arial";
+
+			// To measuring the a word width and height...		
+			var textMetrics = ctx2D.measureText( input );
+			var wordWidth = textMetrics.width;
+			var wordHeight = fontSize * LINEHEIGHT_RATIO;
+			
+			ctx2D.textAlign 	= "center";	// Centered horizontally
+			ctx2D.textBaseline 	= "middle"; // Centered vertical
+			
+			ctx2D.fillText( input, canvas.width >> 1, canvas.height >> 1 );
+			
+			src = canvas;
+			srcCtx2d = ctx2D;
+		}	
+		
+		function exportResultToCanvas() {
+			// Painting the Result on the canvas				
+			prepareExportCanvas();
+			
+			calculateAndAdjustExportCanvasDimension();
+			
+			//onLayout();
+			
+			draw();
+		}	
+		
+		function exportResultToDom() {
+			
+		}
+		
+		function prepareExportCanvas() {
+			// Creating the Canvas and Label Node...
+			var elem = document.createElement('canvas');
+			elem.id = IDS.RESULT;			
+			elem.style.border = "1px solid black";			
+			document.body.appendChild( elem );	
+			
+			var label = document.createElement( 'span' );
+			label.innerText = "Result:";
+			elem.parentNode.insertBefore( label, elem );
+		
+			var canvas = elem;
+			var ctx2D = canvas.getContext( "2d" );
+			
+			var fontSize = 12;
+			ctx2D.font = fontSize + "px Arial";
+
+			// To measuring the a word width and height...		
+			var textMetrics = ctx2D.measureText( input );			
+			
+			exWordWidth = textMetrics.width;
+			exWordHeight = (fontSize * LINEHEIGHT_RATIO).toFixed();
+			
+			debug.log( "exWordWidth: " + exWordWidth + ", exWordHeight: " + exWordHeight );
+			
+			exCanvas = canvas;
+			exCtx2D = ctx2D;			
+		}
+		
+		function calculateAndAdjustExportCanvasDimension() {
+			var width 	= 0, 
+				height 	= 0;
+			
+			var widthOfRow 		= 0, 
+				heightOfCloumn 	= 0;
+			
+			var row 		= -1, 
+				cloumn 		= -1;
+			var rowNum 		= 0, 
+				cloumnNum 	= 0;
+			
+			var m = matrix;
+			var spec;
+			
+			// Sorting the matrix to find horizontal orientation be needed space
+			m.sort( function( who, that ) {
+				var result = who.top > that.top;
+				if ( result ) { 
+					return 1;				
+				} 
+				
+				return who.top == that.top ? 0 : -1;
+				
+			} );
+			
+			// Begin find
+			for ( var i in m ) {
+				spec = m[ i ];
+				
+				debug.log( "Matrix spec V: " + spec );
+				
+				if ( -1 == row ) {
+					row = spec.top;
+					rowNum++;
+				}
+				
+				if ( row == spec.top ) {
+					widthOfRow++;
+				} else {
+					// Enter next row...
+					row = spec.top;
+					rowNum++;
+					width = Math.max( width, widthOfRow );					
+				}																	
+			}	
+
+			matrixHeight = m[ m.length - 1 ].top - m[ 0 ].top + (padding * 2);				
+			matrixOffsetY = m[ 0 ].top - padding;
+			
+			// Sorting the matrix to find vertical orientation be needed space
+			m.sort( function( who, that ) {
+				var result = who.left > that.left;
+				if ( result ) { 
+					return 1;				
+				} 
+				
+				return who.left == that.left ? 0 : -1;
+				
+			} );
+			
+			// Begin find
+			for ( var i in m ) {
+				spec = m[ i ];
+				
+				debug.log( "Matrix spec H: " + spec );
+				
+				if ( -1 == cloumn ) {
+					cloumn = spec.left;
+					cloumnNum++;
+				}
+				
+				if ( cloumn == spec.left ) {
+					heightOfCloumn++;
+				} else {
+					// Enter next cloumn...
+					cloumn = spec.left;
+					cloumnNum++;
+					height = Math.max( height, heightOfCloumn );					
+				}															
+			}
+			
+			matrixWidth = m[ m.length - 1 ].left - m[ 0 ].left + padding;					
+			matrixOffsetX = m[ 0 ].left;
+			
+			debug.log( "matrixWidth: " + matrixWidth + ", matrixHeight: " + matrixHeight );
+			
+			// Finally computing the Result
+			width = Math.max( width, widthOfRow );
+			height = Math.max( height, heightOfCloumn );	
+
+			// Using the head and tail
+			var expectWidth = exWordWidth * matrixWidth,
+				expectHeight = exWordHeight * matrixHeight;
+				
+			/*var expectWidth = exWordWidth * rowNum << 1,
+				expectHeight = exWordHeight * cloumnNum << 1;*/
+				
+			/*var expectWidth = exWordWidth * width,
+				expectHeight = exWordHeight * height;*/
+				
+			debug.log( "expectWidth: " + expectWidth + " , expectHeight: " 
+					+ expectHeight );				
+			
+			// Just used for normal font 
+			exCanvas.width = expectWidth
+			exCanvas.height = expectHeight;
+
+			/*
+			var elem = document.createElement('canvas');
+			elem.id = IDS.RESULT;			
+			elem.width = expectWidth;
+			elem.height = expectHeight;
+			elem.style = "border: 1px solid black;";
+			
+			exCanvas.parentNode.replaceChild( elem, exCanvas );			
+			
+			exCanvas = elem;
+			exCtx2D = exCanvas.getContext( "2d" );
+			*/
+		}
+
+		function draw() {
+			var m = matrix;
+			
+			var canvas = exCanvas;
+			var ctx2D = exCtx2D;
+			
+			var x = 0, 
+				y = 0;
+			
+			var spec;
+			
+			var offsetX = matrixOffsetX,
+				offsetY = matrixOffsetY;
+			
+			for ( var i in m ) {
+				spec = m[ i ];
+				
+				x = (spec.left - offsetX) * exWordWidth;
+				y = (spec.top - offsetY) * exWordHeight;
+				
+				debug.log( "draw: x=" + x + ", y=" + y );
+				
+				ctx2D.fillText( input, x, y );				
+			}
+			
+			onDraw();
+			
+			debug.log( "Drawn." );
+		}
+		
+		function onDraw() {
+		}
+		
+		/** @return {boolean} true if it's not white or transparent color.*/
+		function filterValidPixel( rgba ) {		
+			// TODO 
+			var result = 0;
+			if ( 0 == ( 0xFF ^ rgba & ALPHA_MASK ) ) {				
+				result = 1;
+			}			
+			return result;
+		}
+		
+		/** Resolving the Source Bitmap as a Matrix. */
+		function resolveMatrix() {
+			var imageData = extractImageDataFromSrc();
+			
+			debug.dir( imageData );
+			
+			/*
+			 * Note: The ImageData object is not a picture, it specifies a part 
+			 * (rectangle) on the canvas, and holds information of every pixel 
+			 * inside that rectangle.
+			 *
+			 * For every pixel in an ImageData object there are four pieces of 
+			 * information, the RGBA values:
+			 *
+			 * R - The color red (from 0-255)
+			 * G - The color green (from 0-255)
+			 * B - The color blue (from 0-255)
+			 * A - The alpha channel (from 0-255; 0 is transparent and 255 is 
+			 *     fully visible)
+			 */
+			var raw = imageData.data;
+			if ( ! raw || 0 == raw.length ) return;
+			
+			// The all Pixel of the Source Bitmap
+			var pixels = (src.width * src.height) / 4;
+			var pixelsIndex = 0;
+			// Counting the number of valid pixels
+			var matchedCounter = 0;
+			
+			var r, 
+				g, 
+				b, 
+				a;
+			var rgba;
+			
+			// Initialize the Matrix container...
+			matrix = [];
+			
+			/*const*/ var width = src.width, height = src.height;
+			
+			var rowNum 		= 0,
+				cloumnIndex = 0;
+			
+			/*var first 	= -1,
+				last 	= -1;*/
+			
+			// For PixelSpec
+			var id, 
+				left, 
+				top;
+			
+			for ( var i = 0; i < raw.length; i += 4, pixelsIndex++ ) {
+				// Reading the RGBA value of current pixel...
+				r = raw[ i + PIXEL.OFFSET_RED 	];
+				g = raw[ i + PIXEL.OFFSET_GREEN ];
+				b = raw[ i + PIXEL.OFFSET_BLUE 	];
+				a = raw[ i + PIXEL.OFFSET_ALPAH ];
+				
+				cloumnIndex++;
+				
+				// The hex RGBA value
+				rgba = encodeRgba( r, g, b, a );
+				
+				// If current is a valid pixel.
+				if ( filterValidPixel( rgba ) ) {
+					matchedCounter++;	
+					
+					//// Recording this head and tail to help finding it's Range offset.
+					//if ( -1 == first ) first = cloumnIndex;
+					//last = cloumnIndex;
+
+					var rgbaSet = decodeRgba( rgba );
+					
+					debug.log( "Row: " + rowNum + ", Cloumn: " + cloumnIndex 
+							+ ", P: " + pixelsIndex + ", V: " + matchedCounter 
+							+ ", rgba: " + rgbaSet );							
+				
+					id 		= pixelsIndex;
+					left 	= cloumnIndex;
+					top 	= rowNum;
+				
+					// Create and push a PixelSpec to matrix...
+					matrix.push( new PixelSpec( id, left, top, rgba ) );
+				}
+				
+				// Indicate the to read next Row
+				if ( 0 == pixelsIndex % width ) rowNum++;
+				if ( 0 == pixelsIndex % height ) cloumnIndex = 0;
+			}
+			
+			debug.dir( matrix );
+		}
+		
+		function encodeRgba( rgba ) {						
+			throw "Not implemented yet!";
+		}
+		
+		function encodeRgba( r, g, b, a ) {
+			var result = (r << COLOR_RED_SHIFT) 
+					+ (g << COLOR_GREEN_SHIFT) 
+					+ (b << COLOR_BLUE_SHIFT) 
+					+ a;
+			return result;
+		}
+		
+		/** @return{Rgba} */
+		function decodeRgba( hex ) {			
+			var result = new Rgba ( 
+				(hex & COLOR_RED_MASK) 	>> COLOR_RED_SHIFT,
+				(hex & COLOR_GREEN_MASK) >> COLOR_GREEN_SHIFT,
+				(hex & COLOR_BLUE_MASK) >> COLOR_BLUE_SHIFT,				
+				hex & ALPHA_MASK );			
+			
+			return result;
+		}
+	
+		function init() {
+			// Step 1:
+			prepareSource();
+			
+			// Step 2:
+			resolveMatrix();	
+
+			// 	
+			exportResultToCanvas();
+		}		
+		
+		function onDomLoaded() {
+			var detection = $( IDS.SOURCE );	
+			debug.dir( detection );			
+			
+			if ( detection.getContext ) 
+				init();			
+		}	
+		
+		function startNow() {
+			onDomLoaded();
+		}
+		
+		function listen() {
+			if ( "complete" === document.readyState ) {
+				startNow();
+				return;
+			}
+			
+			// The W3C Standard 
+			if ( W3C_DOM ) 
+				addEvent( document, "DOMContentLoaded", onDomLoaded );
+			else if ( IE_DOM ) 
+				addEvent( window, "load", onDomLoaded );
+			else 
+				return;
+		}
+		
+		return {			
+			init: init,
+			listen: listen
+		};
+	}
+
+	function test() {
+    }
+	
+	// From here to Startup...
+	ImageMapper().listen();
+</script>
+</head>
+<body>
+	<div style="font: 30px Arial; display: none;">A</div>
+	<span>Src:</span>
+	<canvas id="source" width="80" height="80" style="border: 1px solid black;">
+	Your browser does not supported HTML5!
+	</canvas>	
+	<hr/>	
+</body>
+</html>
